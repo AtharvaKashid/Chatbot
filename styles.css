@@ -1,0 +1,66 @@
+body {
+    background-color: #f4f6f8;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+/* Main chat wrapper */
+.chat-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 16px;
+    padding-bottom: 140px; /* space for input */
+}
+
+/* Header */
+.header {
+    background: linear-gradient(90deg, #003366, #0059b3);
+    padding: 1.4rem;
+    border-radius: 16px;
+    color: white;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.header h2 {
+    margin: 0;
+    font-size: 22px;
+}
+
+.header p {
+    margin-top: 6px;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+/* Message bubbles */
+.user-msg,
+.bot-msg {
+    padding: 12px 16px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    max-width: 75%;
+    word-wrap: break-word;
+    line-height: 1.5;
+}
+
+/* User bubble */
+.user-msg {
+    background-color: #dbe9ff;
+    margin-left: auto;
+    text-align: left;
+}
+
+/* Assistant bubble */
+.bot-msg {
+    background-color: #ffffff;
+    border-left: 4px solid #0059b3;
+    margin-right: auto;
+}
+
+/* Role label */
+.role {
+    font-size: 11px;
+    font-weight: 600;
+    color: #666;
+    margin-bottom: 4px;
+}
