@@ -5,40 +5,54 @@ from groq import Groq
 from system_prompt import SYSTEM_PROMPT
 
 # --------------------------------------------------
-# Arize Enterprise Tracing Setup (arize-otel)
+# Arize Enterprise Tracing Setup (Fixed Initialization)
 # --------------------------------------------------
 from arize.otel import register
 from openinference.instrumentation.groq import GroqInstrumentor
 
-# Load environment keys securely from Streamlit secrets
+# 1. Safely inject environment variables first
 if "GROQ_API_KEY" in st.secrets:
     os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
-# Check if Arize credentials exist before registering the tracer provider
-if "ARIZE_SPACE_ID" in st.secrets and "ARIZE_API_KEY" in st.secrets:
-    tracer_provider = register(
-        space_id=st.secrets["ARIZE_SPACE_ID"],
-        api_key=st.secrets["ARIZE_API_KEY"],
-        project_name="xyz-bank-live-chatbot"  # Becomes your Model ID inside Arize AX
-    )
-    # Bind the auto-instrumentation to catch all Groq client calls (Chat & Audio)
-    GroqInstrumentor().instrument(tracer_provider=tracer_provider)
-else:
-    st.warning("Telemetry Warning: Arize credentials missing from st.secrets. Operating without live tracing.")
+# 2. Use st.cache_resource to ensure tracing initializes EXACTLY ONCE across the entire deployment
+@st.cache_resource
+def initialize_telemetry():
+    if "ARIZE_SPACE_ID" in st.secrets and "ARIZE_API_KEY" in st.secrets:
+        try:
+            tracer_provider = register(
+                space_id=st.secrets["ARIZE_SPACE_ID"],
+                api_key=st.secrets["ARIZE_API_KEY"],
+                project_name="xyz-bank-live-chatbot"  # This creates your project/Model ID in Arize
+            )
+            # Instrument the Groq SDK to the global OpenTelemetry tracer provider
+            GroqInstrumentor().instrument(tracer_provider=tracer_provider)
+            return True
+        except Exception as e:
+            return f"Telemetry Initialization Error: {str(e)}"
+    return "Telemetry Warning: Arize credentials missing from st.secrets."
+
+# Run telemetry setup
+telemetry_status = initialize_telemetry()
+if telemetry_status is not True:
+    st.warning(telemetry_status)
 
 # --------------------------------------------------
 # Page Configuration
 # --------------------------------------------------
 st.set_page_config(page_title="XYZ Bank Chatbot", page_icon="🏦", layout="centered")
 
-# Initialize Groq Client securely
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+# Initialize Groq Client securely (Ensure key exists to prevent initialization crashes)
+if "GROQ_API_KEY" in st.secrets:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+else:
+    st.error("Missing GROQ_API_KEY in Streamlit Secrets!")
+    st.stop()
 
 def get_llm_response(messages):
     # Strip internal keys before sending to Groq
     clean_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
     
-    # This specific call will be automatically tracked by the OpenInference SDK
+    # This specific call will be automatically tracked by Arize via OpenInference
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=clean_messages,
@@ -50,20 +64,17 @@ def get_llm_response(messages):
 def transcribe_audio(audio_bytes):
     """Transcribes raw audio bytes into text using Groq's Whisper API"""
     try:
-        # Save audio bytes temporarily to pass to the API
         temp_filename = "temp_audio.wav"
         with open(temp_filename, "wb") as f:
             f.write(audio_bytes)
         
-        # Call Groq Audio Transcription API
         with open(temp_filename, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
                 file=(temp_filename, audio_file.read()),
-                model="distil-whisper-large-v3-en",  # High-speed Whisper model on Groq
+                model="distil-whisper-large-v3-en",
                 response_format="text"
             )
         
-        # Clean up temporary file
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
             
@@ -79,7 +90,7 @@ try:
     with open("styles.css", "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 except FileNotFoundError:
-    pass # Fallback if file missing
+    pass 
 
 # --------------------------------------------------
 # Initialize Conversation Memory
@@ -89,7 +100,6 @@ if "messages" not in st.session_state:
         {"role": "system", "content": SYSTEM_PROMPT, "internal": True}
     ]
 
-# Keep track of processed audio chunks to prevent dynamic rerun processing loops
 if "last_audio_md5" not in st.session_state:
     st.session_state.last_audio_md5 = None
 
@@ -130,12 +140,10 @@ st.markdown("---")
 col_text, col_voice = st.columns([5, 1])
 
 with col_voice:
-    # Browser-based voice input
     audio_bytes = audio_recorder(text="", icon_size="2x")
 
 user_input = col_text.chat_input("Type or use voice...")
 
-# Check if a NEW voice message has been recorded
 if audio_bytes:
     current_audio_hash = hash(audio_bytes)
     if st.session_state.last_audio_md5 != current_audio_hash:
@@ -145,9 +153,8 @@ if audio_bytes:
             transcribed_text = transcribe_audio(audio_bytes)
             
         if transcribed_text:
-            user_input = transcribed_text  # Route the voice transcript into the processing block
+            user_input = transcribed_text
 
-# Process User Input (Whether it came via text box or voice transcription)
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.spinner("Assistant is typing..."):
@@ -155,6 +162,6 @@ if user_input:
         st.session_state.messages.append({"role": "assistant", "content": reply})
     st.rerun()
 
-# Trim history
+# Trim history (Keep system prompt + last 8 entries)
 if len(st.session_state.messages) > 9:
     st.session_state.messages = [st.session_state.messages[0]] + st.session_state.messages[-8:]
